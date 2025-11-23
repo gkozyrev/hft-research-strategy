@@ -90,6 +90,7 @@ add_library(mexc
     src/strategy/orderbook.cpp
     src/strategy/orderbook_manager.cpp
     src/strategy/orderbook_display.cpp
+    src/strategy/latency_tracker.cpp
     ${PROTO_SRCS}
 )
 

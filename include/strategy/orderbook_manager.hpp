@@ -1,6 +1,7 @@
 #pragma once
 
 #include "strategy/orderbook.hpp"
+#include "strategy/latency_tracker.hpp"
 #include "mexc/ws_spot_client.hpp"
 
 #include <nlohmann/json.hpp>
@@ -40,12 +41,21 @@ public:
     // Set callback for when order book is updated
     using UpdateCallback = std::function<void(const OrderBookSnapshot&)>;
     void set_update_callback(UpdateCallback callback);
+    
+    // Get latency tracker
+    [[nodiscard]] const LatencyTracker& get_latency_tracker() const { return latency_tracker_; }
+    [[nodiscard]] LatencyTracker& get_latency_tracker() { return latency_tracker_; }
 
 private:
     std::string symbol_;
     OrderBook orderbook_;
     UpdateCallback update_callback_;
     bool subscribed_ = false;
+    LatencyTracker latency_tracker_; // Tracks end-to-end latency from message received to orderbook updated
+    
+    // Version tracking for aggregated depth
+    std::string last_to_version_; // Last toVersion received from WebSocket
+    long long snapshot_version_ = 0; // Version from initial REST API snapshot
     
     // Parse MEXC depth snapshot format
     std::vector<PriceLevel> parse_depth_levels(const nlohmann::json& levels);

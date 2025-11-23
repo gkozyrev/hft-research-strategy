@@ -31,8 +31,11 @@ bool OrderBookManager::subscribe(mexc::WsSpotClient& ws_client, mexc::SpotClient
                 
                 if (!bids.empty() && !asks.empty()) {
                     orderbook_.apply_snapshot(bids, asks, last_update_id);
+                    snapshot_version_ = last_update_id;
+                    last_to_version_.clear(); // Reset WebSocket version tracking
                     std::cout << "[OrderBook] Initial snapshot loaded - bids: " << bids.size() 
-                              << ", asks: " << asks.size() << std::endl;
+                              << ", asks: " << asks.size() 
+                              << ", version: " << snapshot_version_ << std::endl;
                 }
             }
         } catch (const std::exception& e) {
@@ -64,6 +67,8 @@ void OrderBookManager::unsubscribe(mexc::WsSpotClient& ws_client) {
 }
 
 bool OrderBookManager::handle_depth_message(const nlohmann::json& message) {
+    auto start_time = std::chrono::steady_clock::now();
+    
     try {
         // MEXC v3 WebSocket depth message format: {"c":"spot@public.depth.v3.api@BTCUSDT","d":{...}}
         // The "d" field contains the actual depth data
@@ -101,18 +106,7 @@ bool OrderBookManager::handle_depth_message(const nlohmann::json& message) {
             depth_data = message;
         }
         
-        // Extract update ID
-        if (depth_data.contains("version") || depth_data.contains("lastUpdateId")) {
-            update_id = depth_data.contains("version") 
-                ? depth_data["version"].get<long long>()
-                : depth_data["lastUpdateId"].get<long long>();
-        } else if (message.contains("version") || message.contains("lastUpdateId")) {
-            update_id = message.contains("version")
-                ? message["version"].get<long long>()
-                : message["lastUpdateId"].get<long long>();
-        }
-        
-        // Parse bids and asks
+        // Parse bids and asks first
         std::vector<PriceLevel> bids;
         std::vector<PriceLevel> asks;
         
@@ -128,20 +122,154 @@ bool OrderBookManager::handle_depth_message(const nlohmann::json& message) {
             return false;
         }
         
-        // Apply update
-        // For aggregated depth, MEXC sends incremental updates (only changes)
-        // Each message may contain:
-        // - Only bids: changes to bids side (merge, don't replace)
-        // - Only asks: changes to asks side (merge, don't replace)
-        // - Both: changes to both sides
-        // We merge these incremental updates into the existing orderbook
+        // Extract version information for aggregated depth
+        // For aggregated depth, MEXC uses fromVersion and toVersion
+        std::string from_version;
+        std::string to_version;
+        if (depth_data.contains("fromVersion")) {
+            from_version = depth_data["fromVersion"].get<std::string>();
+        }
+        if (depth_data.contains("toVersion")) {
+            to_version = depth_data["toVersion"].get<std::string>();
+        }
+        
+        // Extract update ID - prefer toVersion for aggregated depth, fallback to other fields
+        if (!to_version.empty()) {
+            try {
+                update_id = std::stoll(to_version);
+            } catch (...) {
+                // If toVersion is not numeric, fall through to other options
+            }
+        }
+        
+        if (update_id == 0) {
+            // Fallback to other version fields
+            if (depth_data.contains("version") || depth_data.contains("lastUpdateId")) {
+                update_id = depth_data.contains("version") 
+                    ? depth_data["version"].get<long long>()
+                    : depth_data["lastUpdateId"].get<long long>();
+            } else if (message.contains("version") || message.contains("lastUpdateId")) {
+                update_id = message.contains("version")
+                    ? message["version"].get<long long>()
+                    : message["lastUpdateId"].get<long long>();
+            }
+        }
+        
+        // Check version continuity for aggregated depth
+        if (!from_version.empty() && !to_version.empty()) {
+            if (!last_to_version_.empty()) {
+                // Calculate expected fromVersion (last toVersion + 1)
+                try {
+                    long long last_version = std::stoll(last_to_version_);
+                    long long expected_from = last_version + 1;
+                    long long actual_from = std::stoll(from_version);
+                    
+                    if (actual_from != expected_from) {
+                        std::cerr << "[OrderBook] WARNING: Version gap detected! Expected fromVersion=" << expected_from
+                                  << " but got " << actual_from << ". Missing " << (actual_from - expected_from) 
+                                  << " updates. Orderbook may be stale." << std::endl;
+                        // For now, continue - but in production you might want to reinitialize
+                    }
+                } catch (...) {
+                    // Version strings might not be numeric, skip validation
+                }
+            }
+            
+            // Check version continuity
+            // For aggregated depth, we need to ensure fromVersion matches our expected version
+            try {
+                long long from_version_num = std::stoll(from_version);
+                
+                if (last_to_version_.empty()) {
+                    // First WebSocket message after snapshot - check gap from snapshot
+                    if (snapshot_version_ > 0) {
+                        long long expected_from = snapshot_version_ + 1;
+                        long long gap = from_version_num - expected_from;
+                        
+                        if (gap > 5000) {
+                            // Extremely large gap - skip, would corrupt orderbook
+                            std::cerr << "[OrderBook] Skipping first message: fromVersion (" << from_version_num 
+                                      << ") is " << gap << " updates ahead of snapshot (" << snapshot_version_ 
+                                      << "). Orderbook would be corrupted." << std::endl;
+                            return false;
+                        } else if (gap > 0) {
+                            // Acceptable gap - adjust baseline to accept this and future messages
+                            // This is normal in high-frequency markets
+                            if (gap > 1000) {
+                                std::cerr << "[OrderBook] WARNING: First message gap of " << gap 
+                                          << " updates from snapshot. Adjusting baseline." << std::endl;
+                            }
+                            snapshot_version_ = from_version_num - 1;
+                        } else if (gap < 0 && -gap > 100) {
+                            // Significantly outdated
+                            std::cerr << "[OrderBook] Outdated first message: fromVersion (" << from_version_num 
+                                      << ") is " << -gap << " updates behind snapshot. Ignoring." << std::endl;
+                            return false;
+                        }
+                        // If gap == 0 or small negative, that's fine
+                    } else {
+                        // No snapshot - accept as baseline
+                        if (from_version_num > 0) {
+                            snapshot_version_ = from_version_num - 1;
+                        }
+                    }
+                } else {
+                    // Subsequent messages - check continuity with last_to_version_
+                    long long last_version = std::stoll(last_to_version_);
+                    long long expected_from = last_version + 1;
+                    long long gap = from_version_num - expected_from;
+                    
+                    if (gap > 100) {
+                        // Large gap in continuity - skip
+                        std::cerr << "[OrderBook] Skipping message: fromVersion (" << from_version_num 
+                                  << ") is " << gap << " updates ahead of expected (" << expected_from 
+                                  << "). Missing updates." << std::endl;
+                        return false;
+                    } else if (gap < 0 && -gap > 100) {
+                        // Significantly outdated
+                        std::cerr << "[OrderBook] Outdated message: fromVersion (" << from_version_num 
+                                  << ") is " << -gap << " updates behind expected (" << expected_from 
+                                  << "). Ignoring." << std::endl;
+                        return false;
+                    }
+                    // Small gaps (1-100) are acceptable due to network timing
+                }
+            } catch (...) {
+                // Skip if version is not numeric
+            }
+        }
+        
         if (is_snapshot) {
             // Full snapshot with both bids and asks (from REST API)
             orderbook_.apply_snapshot(bids, asks, update_id);
+            snapshot_version_ = update_id;
         } else {
-            // Incremental update - merge changes into existing orderbook
-            orderbook_.apply_update(bids, asks, update_id);
+            // Incremental update - update absolute quantities at specified price levels
+            // Note: These are absolute values, not deltas. Levels not in the message remain unchanged.
+            // For aggregated depth, messages may contain only bids, only asks, or both
+            // Only apply if orderbook is already valid, or if this message has both sides
+            if (orderbook_.is_valid() || (!bids.empty() && !asks.empty())) {
+                orderbook_.apply_update(bids, asks, update_id);
+            } else {
+                // Orderbook is not valid yet and this message doesn't have both sides
+                // Skip this update - wait for a message with both sides or for orderbook to become valid
+                return false;
+            }
         }
+        
+        // Update last version
+        if (!to_version.empty()) {
+            last_to_version_ = to_version;
+        }
+        
+        // Only proceed if orderbook is valid
+        if (!orderbook_.is_valid()) {
+            return false;
+        }
+        
+        // Record latency (from message received to orderbook updated)
+        auto end_time = std::chrono::steady_clock::now();
+        latency_tracker_.record(start_time, end_time);
         
         // Notify callback
         if (update_callback_) {

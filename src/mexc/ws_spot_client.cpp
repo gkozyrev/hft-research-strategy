@@ -26,8 +26,10 @@ WsSpotClient::WsSpotClient(Credentials credentials, const std::string& base_ws_u
     
     // Set up message handler
     public_ws_->set_message_callback([this](const std::string& message) {
-        // Debug: print received messages
-        std::cout << "[WS] Received: " << message.substr(0, 200) << std::endl;
+        // Only log subscription confirmations, not every message (to avoid corrupting display)
+        if (message.find("\"code\":0") != std::string::npos && message.find("msg") != std::string::npos) {
+            std::cout << "[WS] Subscription confirmed" << std::endl;
+        }
         handle_message(message);
     });
     

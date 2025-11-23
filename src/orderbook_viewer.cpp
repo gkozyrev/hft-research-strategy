@@ -98,9 +98,9 @@ int main(int argc, char* argv[]) {
         // Create display
         strategy::OrderBookDisplay display(symbol, 10);
         
-        // Set up update callback to render orderbook
+        // Set up update callback to render orderbook with latency tracking
         ob_manager.set_update_callback([&display, &ob_manager](const strategy::OrderBookSnapshot& snapshot) {
-            display.render(ob_manager.get_orderbook());
+            display.render(ob_manager.get_orderbook(), ob_manager.get_latency_tracker());
         });
         
         // Connect WebSocket
@@ -140,9 +140,9 @@ int main(int argc, char* argv[]) {
             // Check if we should render (throttle rendering)
             auto now = std::chrono::steady_clock::now();
             if (now - last_render_time >= render_interval) {
-                // Render current orderbook state
+                // Render current orderbook state with latency tracking
                 if (ob_manager.get_orderbook().is_valid()) {
-                    display.render(ob_manager.get_orderbook());
+                    display.render(ob_manager.get_orderbook(), ob_manager.get_latency_tracker());
                 }
                 last_render_time = now;
             }

@@ -166,6 +166,24 @@ void OrderBookDisplay::print_stats(const OrderBookSnapshot& snapshot) {
     std::cout << "  Last Update ID: " << GRAY << snapshot.last_update_id << RESET << "\n";
 }
 
+void OrderBookDisplay::print_stats(const OrderBookSnapshot& snapshot, const LatencyTracker& latency_tracker) {
+    std::cout << "\n" << BOLD << BLUE << "Stats:" << RESET << "\n";
+    std::cout << "  Best Bid: " << GREEN << BOLD << format_price(snapshot.best_bid) << RESET
+              << "  Best Ask: " << RED << BOLD << format_price(snapshot.best_ask) << RESET
+              << "  Spread: " << YELLOW << format_price(snapshot.spread) << RESET
+              << "  Microprice: " << CYAN << format_price(snapshot.microprice) << RESET << "\n";
+    std::cout << "  Bid Volume (" << levels_ << " levels): " << GREEN << format_volume(snapshot.bid_volume) << RESET
+              << "  Ask Volume (" << levels_ << " levels): " << RED << format_volume(snapshot.ask_volume) << RESET << "\n";
+    std::cout << "  Last Update ID: " << GRAY << snapshot.last_update_id << RESET << "\n";
+    
+    // Display latency stats
+    auto latency_stats = latency_tracker.get_stats();
+    if (latency_stats.count > 0) {
+        std::cout << "\n" << BOLD << MAGENTA << "Latency:" << RESET << "\n";
+        std::cout << "  " << latency_tracker.format_stats() << "\n";
+    }
+}
+
 void OrderBookDisplay::render(const OrderBook& orderbook) {
     if (!orderbook.is_valid()) {
         std::cout << RED << "Order book is not valid (missing bids or asks)" << RESET << "\n";
@@ -202,6 +220,46 @@ void OrderBookDisplay::render(const OrderBook& orderbook) {
     // Print stats
     auto snapshot = orderbook.get_snapshot(levels_, false);
     print_stats(snapshot);
+    
+    std::cout << std::flush;
+}
+
+void OrderBookDisplay::render(const OrderBook& orderbook, const LatencyTracker& latency_tracker) {
+    if (!orderbook.is_valid()) {
+        std::cout << RED << "Order book is not valid (missing bids or asks)" << RESET << "\n";
+        return;
+    }
+    
+    // Clear screen on first render
+    if (first_render_) {
+        clear();
+        first_render_ = false;
+    } else {
+        // Move cursor to top
+        std::cout << "\033[H";
+    }
+    
+    print_header();
+    
+    // Get orderbook data
+    auto asks = orderbook.get_asks(levels_);
+    auto bids = orderbook.get_bids(levels_);
+    double best_bid = orderbook.best_bid();
+    double best_ask = orderbook.best_ask();
+    double spread = orderbook.spread();
+    
+    // Print asks (top half)
+    print_asks(asks, best_ask);
+    
+    // Print spread separator
+    print_spread(best_bid, best_ask, spread);
+    
+    // Print bids (bottom half)
+    print_bids(bids, best_bid);
+    
+    // Print stats with latency
+    auto snapshot = orderbook.get_snapshot(levels_, false);
+    print_stats(snapshot, latency_tracker);
     
     std::cout << std::flush;
 }

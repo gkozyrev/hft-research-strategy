@@ -1,6 +1,7 @@
 #pragma once
 
 #include "strategy/orderbook.hpp"
+#include "strategy/latency_tracker.hpp"
 
 #include <iomanip>
 #include <iostream>
@@ -22,6 +23,9 @@ public:
 
     // Render orderbook to terminal
     void render(const OrderBook& orderbook);
+    
+    // Render orderbook with latency tracking
+    void render(const OrderBook& orderbook, const LatencyTracker& latency_tracker);
     
     // Render with custom snapshot
     void render_snapshot(const OrderBookSnapshot& snapshot);
@@ -46,6 +50,7 @@ private:
     static constexpr const char* GREEN = "\033[32m";
     static constexpr const char* YELLOW = "\033[33m";
     static constexpr const char* BLUE = "\033[34m";
+    static constexpr const char* MAGENTA = "\033[35m";
     static constexpr const char* CYAN = "\033[36m";
     static constexpr const char* GRAY = "\033[90m";
     
@@ -55,6 +60,7 @@ private:
     void print_spread(double best_bid, double best_ask, double spread);
     void print_bids(const std::vector<PriceLevel>& bids, double best_bid);
     void print_stats(const OrderBookSnapshot& snapshot);
+    void print_stats(const OrderBookSnapshot& snapshot, const LatencyTracker& latency_tracker);
 };
 
 } // namespace strategy
