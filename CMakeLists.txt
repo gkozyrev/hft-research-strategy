@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(OpenSSL REQUIRED)
 find_package(CURL REQUIRED)
+find_package(OpenGL QUIET)
 
 include(FetchContent)
 
@@ -49,6 +50,32 @@ set(protobuf_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(protobuf_INSTALL OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(protobuf)
+
+# Fetch ImGui for GUI
+FetchContent_Declare(
+    imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.90.4
+)
+
+FetchContent_MakeAvailable(imgui)
+
+# Fetch GLFW for windowing (optional, for GUI)
+option(BUILD_GUI "Build GUI orderbook viewer" ON)
+if(BUILD_GUI)
+    FetchContent_Declare(
+        glfw
+        GIT_REPOSITORY https://github.com/glfw/glfw.git
+        GIT_TAG 3.3.9
+    )
+
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+
+    FetchContent_MakeAvailable(glfw)
+endif()
 
 # Generate Protobuf C++ files from all .proto files
 file(GLOB PROTO_ALL_FILES "${CMAKE_CURRENT_SOURCE_DIR}/proto/*.proto")
@@ -133,6 +160,52 @@ target_link_libraries(orderbook_viewer
     PRIVATE
         mexc
 )
+
+# GUI orderbook viewer (optional, requires OpenGL and GLFW)
+if(BUILD_GUI AND OpenGL_FOUND AND TARGET glfw)
+    FetchContent_GetProperties(imgui SOURCE_DIR IMGUI_SOURCE_DIR)
+    if(NOT IMGUI_SOURCE_DIR)
+        set(IMGUI_SOURCE_DIR ${CMAKE_BINARY_DIR}/_deps/imgui-src)
+    endif()
+
+    FetchContent_GetProperties(glfw SOURCE_DIR GLFW_SOURCE_DIR)
+    if(NOT GLFW_SOURCE_DIR)
+        set(GLFW_SOURCE_DIR ${CMAKE_BINARY_DIR}/_deps/glfw-src)
+    endif()
+
+    set(IMGUI_SOURCES
+        ${IMGUI_SOURCE_DIR}/imgui.cpp
+        ${IMGUI_SOURCE_DIR}/imgui_demo.cpp
+        ${IMGUI_SOURCE_DIR}/imgui_draw.cpp
+        ${IMGUI_SOURCE_DIR}/imgui_tables.cpp
+        ${IMGUI_SOURCE_DIR}/imgui_widgets.cpp
+        ${IMGUI_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+        ${IMGUI_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    )
+
+    add_executable(orderbook_viewer_gui
+        src/orderbook_viewer_gui.cpp
+        ${IMGUI_SOURCES}
+    )
+
+    target_include_directories(orderbook_viewer_gui
+        PRIVATE
+            ${IMGUI_SOURCE_DIR}
+            ${IMGUI_SOURCE_DIR}/backends
+    )
+
+    target_link_libraries(orderbook_viewer_gui
+        PRIVATE
+            mexc
+            glfw
+            OpenGL::GL
+    )
+    
+    message(STATUS "GUI orderbook viewer enabled (requires OpenGL)")
+else()
+    message(STATUS "GUI orderbook viewer disabled (OpenGL not found)")
+    message(STATUS "  Install libgl1-mesa-dev or libgl-dev to enable GUI")
+endif()
 
 FetchContent_Declare(
     Catch2

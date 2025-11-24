@@ -9,6 +9,7 @@
 #include <memory>
 #include <string>
 #include <functional>
+#include <mutex>
 
 namespace strategy {
 
@@ -50,6 +51,7 @@ private:
     std::string symbol_;
     OrderBook orderbook_;
     UpdateCallback update_callback_;
+    mutable std::mutex callback_mutex_; // Protects update_callback_ access
     bool subscribed_ = false;
     LatencyTracker latency_tracker_; // Tracks end-to-end latency from message received to orderbook updated
     

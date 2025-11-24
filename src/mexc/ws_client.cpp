@@ -7,6 +7,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
+#include <iostream>
 #include <thread>
 
 namespace mexc {
@@ -39,7 +40,8 @@ struct WsClient::Impl {
     int max_reconnect_attempts = -1; // -1 means infinite
     int reconnect_attempts = 0;
     int reconnect_delay_ms = 1000;
-    int heartbeat_interval_ms = 30000;
+    int heartbeat_interval_ms = 20000; // Send ping every 20 seconds to keep connection alive
+    int connection_timeout_ms = 90000; // Consider connection dead if no data for 90 seconds (3x heartbeat)
     
     std::chrono::steady_clock::time_point last_ping_time;
     std::condition_variable cv;
@@ -112,6 +114,9 @@ int callback_ws_client(struct lws* wsi, enum lws_callback_reasons reason,
         }
 
         case LWS_CALLBACK_CLIENT_RECEIVE: {
+            // Update last ping time on any receive to track connection activity
+            impl->last_ping_time = std::chrono::steady_clock::now();
+            
             if (in && len > 0) {
                 // Check if this is a binary frame (Protobuf) or text frame (JSON)
                 int is_binary = lws_frame_is_binary(wsi);
@@ -314,15 +319,23 @@ bool WsClient::connect() {
                 lws_service(pimpl_->context, 0);
             }
             
-            // Handle heartbeat
+            // Handle heartbeat - send ping frame to keep connection alive
             auto now = std::chrono::steady_clock::now();
             if (pimpl_->connected && 
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     now - pimpl_->last_ping_time).count() >= pimpl_->heartbeat_interval_ms) {
                 if (pimpl_->wsi) {
-                    lws_callback_on_writable(pimpl_->wsi);
+                    // Send WebSocket ping frame to keep connection alive
+                    // Empty ping frame is valid - server will respond with pong
+                    unsigned char ping_frame[LWS_PRE + 0];
+                    int ret = lws_write(pimpl_->wsi, ping_frame + LWS_PRE, 0, LWS_WRITE_PING);
+                    if (ret >= 0) {
+                        pimpl_->last_ping_time = now;
+                    } else {
+                        // Ping failed - connection might be dead
+                        std::cerr << "[WS] Ping failed, connection may be dead" << std::endl;
+                    }
                 }
-                pimpl_->last_ping_time = now;
             }
             
             // Handle reconnection (don't call connect() recursively - just set flag)

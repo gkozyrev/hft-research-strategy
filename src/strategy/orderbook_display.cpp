@@ -190,14 +190,9 @@ void OrderBookDisplay::render(const OrderBook& orderbook) {
         return;
     }
     
-    // Clear screen on first render
-    if (first_render_) {
-        clear();
-        first_render_ = false;
-    } else {
-        // Move cursor to top
-        std::cout << "\033[H";
-    }
+    // Always clear entire screen and move cursor to top for clean rendering
+    std::cout << "\033[2J\033[H";
+    first_render_ = false;
     
     print_header();
     
@@ -230,14 +225,9 @@ void OrderBookDisplay::render(const OrderBook& orderbook, const LatencyTracker& 
         return;
     }
     
-    // Clear screen on first render
-    if (first_render_) {
-        clear();
-        first_render_ = false;
-    } else {
-        // Move cursor to top
-        std::cout << "\033[H";
-    }
+    // Always clear entire screen and move cursor to top for clean rendering
+    std::cout << "\033[2J\033[H";
+    first_render_ = false;
     
     print_header();
     
@@ -265,14 +255,9 @@ void OrderBookDisplay::render(const OrderBook& orderbook, const LatencyTracker& 
 }
 
 void OrderBookDisplay::render_snapshot(const OrderBookSnapshot& snapshot) {
-    // Clear screen on first render
-    if (first_render_) {
-        clear();
-        first_render_ = false;
-    } else {
-        // Move cursor to top
-        std::cout << "\033[H";
-    }
+    // Always clear entire screen and move cursor to top for clean rendering
+    std::cout << "\033[2J\033[H";
+    first_render_ = false;
     
     print_header();
     
